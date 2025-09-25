@@ -8,11 +8,11 @@ from datetime import datetime, timedelta
 from sqlalchemy import create_engine
 
 # === CONFIGURATION ===
-METER_LIST_FILES_PATH = r'C:\Users\PTPL\WORK\SCCC\primustech_sccc_trend_extractor\Input'
-OUTPUT_ROOT_PATH = r'C:\Users\PTPL\WORK\SCCC\primustech_sccc_trend_extractor\Output'
+METER_LIST_FILES_PATH = r'C:\Users\PTPL\WORK\primustech_trend_extractor\SCCC\Input'
+OUTPUT_ROOT_PATH = r'C:\Users\PTPL\WORK\primustech_trend_extractor\SCCC\Output'
 Extract_Minustes = 1
-start_date_str = "01012025"
-end_date_str = "01062025"
+start_date_str = "01072024"
+end_date_str = "31122024"
 mergefile = True
 
 # === Convert date strings to datetime ===
