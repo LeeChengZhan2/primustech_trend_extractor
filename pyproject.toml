@@ -1,0 +1,10 @@
+[project]
+name = "primustech_trend_extractor"
+version = "0.1.0"
+dependencies = [
+    "pandas",
+    "numpy",
+    "SQLalchemy",
+    "pyodbc",
+    "openpyxl"
+]

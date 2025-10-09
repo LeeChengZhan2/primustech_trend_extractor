@@ -11,8 +11,8 @@ from sqlalchemy import create_engine
 METER_LIST_FILES_PATH = r'C:\Users\PTPL\WORK\primustech_trend_extractor\SCCC\Input'
 OUTPUT_ROOT_PATH = r'C:\Users\PTPL\WORK\primustech_trend_extractor\SCCC\Output'
 Extract_Minustes = 1
-start_date_str = "01072024"
-end_date_str = "31122024"
+start_date_str = "02102025"
+end_date_str = "09102025"
 mergefile = True
 
 # === Convert date strings to datetime ===
