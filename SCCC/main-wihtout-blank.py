@@ -54,98 +54,80 @@ for file in os.listdir(METER_LIST_FILES_PATH):
             for i in range((end_date - start_date).days + 1)
         ])
 
-        # === Main Tag Loop ===
-        merged_df = None
+        # === Batch query all tags at once for speed ===
+        try:
+            safe_tags = [t.replace("'", "''") for t in tag_list]
+            if not safe_tags:
+                print("⚠️ No tags in list; skipping file")
+                continue
+            in_list = ", ".join([f"'{t}'" for t in safe_tags])
 
-        for idx, tag in enumerate(tag_list):
-            print(f"🔍 [{idx+1}/{len(tag_list)}] Processing tag: {tag}")
-            safe_tag = tag.replace("'", "''")
-
+            minute = Extract_Minustes
             query = f"""
             SELECT 
-                n.Name AS [TagName],
-                e.[Value],
-                e.OccurredOn
+                n.tagname AS [TagName],
+                DATEADD(minute, (DATEDIFF(minute, 0, e.OccurredOn) / {minute}) * {minute}, 0) AS OccurredOn,
+                AVG(e.[Value]) AS [Value]
             FROM ({table_union_sql}) AS e
             JOIN [SIRIUSBOOT].[dbo].[Point] AS n ON e.PointId = n.id
-            WHERE n.tagname = '{safe_tag}'
-            ORDER BY e.PointId, e.OccurredOn;
+            WHERE n.tagname IN ({in_list})
+            GROUP BY n.tagname, DATEADD(minute, (DATEDIFF(minute, 0, e.OccurredOn) / {minute}) * {minute}, 0)
+            ORDER BY OccurredOn;
             """
 
-            try:
-                df = pd.read_sql(query, engine)
-            except Exception as e:
-                print(f"❌ Error querying tag '{tag}': {e}")
-                traceback.print_exc()
-                continue
+            df_all = pd.read_sql(query, engine)
+        except Exception as e:
+            print(f"❌ Error querying tags batch for '{FileName}': {e}")
+            traceback.print_exc()
+            continue
 
-            if df.empty:
-                print(f"⚠️ No data found for '{tag}'")
-                continue
+        if df_all is None or df_all.empty:
+            print(f"⚠️ No data found for file '{FileName}'")
+            continue
 
-            try:
-                df['OccurredOn'] = pd.to_datetime(df['OccurredOn']).dt.floor(f'{Extract_Minustes}min')
-                df = df.groupby(['TagName', 'OccurredOn'], as_index=False)['Value'].mean()
-                df['Value'] = df['Value'].apply(lambda x: np.floor(x * 100) / 100)
+        # Round to 2 decimals
+        df_all['Value'] = df_all['Value'].apply(lambda x: np.floor(x * 100) / 100)
 
-                # Prepare for merge
-                tag_df = df[['OccurredOn', 'Value']].copy()
-                tag_df.rename(columns={'Value': tag}, inplace=True)
+        # Pivot to wide and sort
+        df_all['OccurredOn'] = pd.to_datetime(df_all['OccurredOn'])
+        wide = df_all.pivot(index='OccurredOn', columns='TagName', values='Value').sort_index()
+        wide.columns.name = None
 
-                if merged_df is None:
-                    merged_df = tag_df
-                else:
-                    merged_df = pd.merge(merged_df, tag_df, on='OccurredOn', how='outer')
+        # Build a full minute grid across the requested date range
+        grid_start = datetime.combine(start_date.date(), datetime.min.time())
+        grid_end = datetime.combine(end_date.date(), datetime.max.time())
+        grid_end = (pd.to_datetime(grid_end).floor('min'))
+        full_range = pd.date_range(start=grid_start, end=grid_end, freq=f'{Extract_Minustes}min')
 
-                # Save only if mergefile is False
-                if not mergefile:
-                    df['Date'] = df['OccurredOn'].dt.date
-                    df['Time'] = df['OccurredOn'].dt.time
-                    df = df[['TagName', 'OccurredOn', 'Date', 'Time', 'Value']]
-                    safe_filename = tag.replace("\\", "_").replace("/", "_").replace(":", "_")
-                    # tag_output_path = os.path.join(output_dir, f"{safe_filename}.csv")
-                    tag_output_path = os.path.join(OUTPUT_ROOT_PATH, f"{safe_filename}.csv")
-                    df.to_csv(tag_output_path, index=False, encoding='utf-8')
-                    print(f"✅ {len(df)} rows saved for '{tag}'")
+        # Reindex and fill to avoid blanks
+        wide = wide.reindex(full_range)
+        value_cols = list(wide.columns)
+        if value_cols:
+            wide[value_cols] = wide[value_cols].ffill().bfill()
 
-            except Exception as e:
-                print(f"❌ Error processing tag '{tag}': {e}")
-                traceback.print_exc()
-                continue
+        wide.index.name = 'OccurredOn'
+        wide = wide.reset_index()
 
-        # === Final Merge File ===
-        if mergefile and merged_df is not None and not merged_df.empty:
-            # Ensure proper datetime and chronological order
-            merged_df['OccurredOn'] = pd.to_datetime(merged_df['OccurredOn'])
-            merged_df = merged_df.sort_values(by='OccurredOn')
+        if not mergefile:
+            # Save individual CSVs for each tag using the filled 1-minute grid
+            wide['Date'] = wide['OccurredOn'].dt.date
+            wide['Time'] = wide['OccurredOn'].dt.time
+            for tag in value_cols:
+                out = wide[['OccurredOn', 'Date', 'Time', tag]].copy()
+                out['TagName'] = tag
+                out.rename(columns={tag: 'Value'}, inplace=True)
+                safe_filename = tag.replace("\\", "_").replace("/", "_").replace(":", "_")
+                tag_output_path = os.path.join(OUTPUT_ROOT_PATH, f"{safe_filename}.csv")
+                out[['TagName', 'OccurredOn', 'Date', 'Time', 'Value']].to_csv(tag_output_path, index=False, encoding='utf-8')
+                print(f"✅ Saved: {tag_output_path}")
+        else:
+            # Write merged file with a strict minute grid and no blanks
+            merged_df = wide.copy()
 
-            # Build a full 1-minute grid over the requested date range
-            grid_start = datetime.combine(start_date.date(), datetime.min.time())
-            grid_end = datetime.combine(end_date.date(), datetime.max.time())
-            # Cap end to the last minute of the day range
-            grid_end = (pd.to_datetime(grid_end).floor('min'))
-            full_range = pd.date_range(start=grid_start, end=grid_end, freq=f'{Extract_Minustes}min')
-
-            # Reindex to the full minute grid, then fill missing values
-            merged_df = merged_df.set_index('OccurredOn')
-            merged_df = merged_df.reindex(full_range)
-            merged_df.index.name = 'OccurredOn'
-
-            # Forward-fill to use the most recent previous value, then backfill initial gaps
-            value_cols = [c for c in merged_df.columns]
-            if value_cols:
-                merged_df[value_cols] = merged_df[value_cols].ffill().bfill()
-
-            merged_df = merged_df.reset_index()
-
-            # Add separate Date and Time columns
             merged_df['Date'] = merged_df['OccurredOn'].dt.date
             merged_df['Time'] = merged_df['OccurredOn'].dt.time
-
-            # Format OccurredOn for output
             merged_df['OccurredOn'] = merged_df['OccurredOn'].dt.strftime('%-m/%-d/%Y %-H:%M')
 
-            # Reorder columns
             ordered_cols = ['OccurredOn', 'Date', 'Time'] + [col for col in merged_df.columns if col not in ['OccurredOn', 'Date', 'Time']]
             merged_df = merged_df[ordered_cols]
 
