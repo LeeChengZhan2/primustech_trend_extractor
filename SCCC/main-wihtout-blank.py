@@ -119,23 +119,36 @@ for file in os.listdir(METER_LIST_FILES_PATH):
             merged_df['OccurredOn'] = pd.to_datetime(merged_df['OccurredOn'])
             merged_df = merged_df.sort_values(by='OccurredOn')
 
-            # Forward-fill missing values per tag to avoid blanks
-            value_cols = [c for c in merged_df.columns if c != 'OccurredOn']
+            # Build a full 1-minute grid over the requested date range
+            grid_start = datetime.combine(start_date.date(), datetime.min.time())
+            grid_end = datetime.combine(end_date.date(), datetime.max.time())
+            # Cap end to the last minute of the day range
+            grid_end = (pd.to_datetime(grid_end).floor('min'))
+            full_range = pd.date_range(start=grid_start, end=grid_end, freq=f'{Extract_Minustes}min')
+
+            # Reindex to the full minute grid, then fill missing values
+            merged_df = merged_df.set_index('OccurredOn')
+            merged_df = merged_df.reindex(full_range)
+            merged_df.index.name = 'OccurredOn'
+
+            # Forward-fill to use the most recent previous value, then backfill initial gaps
+            value_cols = [c for c in merged_df.columns]
             if value_cols:
-                merged_df[value_cols] = merged_df[value_cols].ffill()
+                merged_df[value_cols] = merged_df[value_cols].ffill().bfill()
+
+            merged_df = merged_df.reset_index()
 
             # Add separate Date and Time columns
             merged_df['Date'] = merged_df['OccurredOn'].dt.date
             merged_df['Time'] = merged_df['OccurredOn'].dt.time
 
-            # Format OccurredOn if needed
+            # Format OccurredOn for output
             merged_df['OccurredOn'] = merged_df['OccurredOn'].dt.strftime('%-m/%-d/%Y %-H:%M')
 
             # Reorder columns
             ordered_cols = ['OccurredOn', 'Date', 'Time'] + [col for col in merged_df.columns if col not in ['OccurredOn', 'Date', 'Time']]
             merged_df = merged_df[ordered_cols]
 
-            # final_output = os.path.join(output_dir, f"{FileName}_MERGED.csv")
             final_output = os.path.join(OUTPUT_ROOT_PATH, f"{FileName}_MERGED_{start_date_str}_{end_date_str}.csv")
             merged_df.to_csv(final_output, index=False, encoding='utf-8')
             print(f"✅ Merged file created: {final_output}\n")
